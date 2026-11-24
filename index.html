@@ -85,6 +85,14 @@ th{color:var(--mut);font-weight:500}
 .badge.ok{background:#1f9d6b22;color:var(--good)}.badge.bad{background:#d6454522;color:var(--bad)}.badge.wn{background:#d98a0b22;color:var(--warn)}
 pre{white-space:pre-wrap;word-break:break-word;font-size:12px;background:var(--bg);border-radius:10px;padding:10px;margin:8px 0 0}
 .empty{text-align:center;color:var(--mut);padding:26px 10px}
+.tabs2{display:flex;border-bottom:2px solid var(--line);margin-bottom:12px}
+.tabs2 button{flex:1;border:0;background:none;color:var(--mut);padding:12px 0;font-size:16px;font-weight:600;border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs2 button.on{color:var(--acc);border-bottom-color:var(--acc)}
+.crow{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--line)}
+.crow:last-child{border:0}.crow .t{flex:1;min-width:0}.crow .pc{color:var(--acc);font-weight:600;margin-left:6px}
+.crow .ch{color:var(--mut);font-size:22px}
+.cdot{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700}
+.note{background:#1f9d6b18;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -115,6 +123,7 @@ var BASE_CATS=[
   {id:'emergency',name:'Emergency fund',kind:'out',bucket:'emergency'},
   {id:'charity',name:'Charity',kind:'out',bucket:'charity'},
   {id:'fun',name:'Fun',kind:'out',bucket:'fun'},
+  {id:'cardpay',name:'Credit card / PayLater payment',kind:'out',bucket:'needs',transfer:true},
   {id:'otherout',name:'Other expense',kind:'out',bucket:'needs'}
 ];
 function uid(){return Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4);}
@@ -154,12 +163,12 @@ function fillDefaults(o){
 function allCats(S){return BASE_CATS.concat(S.cats||[]);}
 function catById(S,id){var a=allCats(S);for(var i=0;i<a.length;i++)if(a[i].id===id)return a[i];return null;}
 function totals(S,ym){
-  var t={inc:0,out:0,net:0,byCat:{},byBucket:{needs:0,saving:0,emergency:0,charity:0,fun:0}};
+  var t={inc:0,out:0,net:0,transfer:0,byCat:{},byBucket:{needs:0,saving:0,emergency:0,charity:0,fun:0}};
   S.tx.forEach(function(x){
     if(ymOf(x.date)!==ym)return;
     var a=Number(x.amount)||0;
     if(x.type==='in'){t.inc+=a;}
-    else{t.out+=a;t.byCat[x.cat]=(t.byCat[x.cat]||0)+a;var c=catById(S,x.cat);var b=(c&&c.bucket&&t.byBucket[c.bucket]!==undefined)?c.bucket:'needs';t.byBucket[b]+=a;}
+    else{var c=catById(S,x.cat);if(c&&c.transfer){t.transfer+=a;return;}t.out+=a;t.byCat[x.cat]=(t.byCat[x.cat]||0)+a;var b=(c&&c.bucket&&t.byBucket[c.bucket]!==undefined)?c.bucket:'needs';t.byBucket[b]+=a;}
   });
   t.net=t.inc-t.out;return t;
 }
@@ -244,6 +253,32 @@ function pieSvg(items,top,bottom){
     else g+='<path d="'+arcPath(100,100,90,55,s.a0,s.a1)+'" fill="'+items[i].color+'"/>';
   });
   return '<svg viewBox="0 0 200 200" role="img"><g>'+g+'</g><text x="100" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">'+top+'</text><text x="100" y="116" text-anchor="middle" font-size="10" fill="#8a918c">'+bottom+'</text></svg>';
+}
+var CF_EXCL=['saving','emergency','cardpay'];
+var PALETTE=['#c06a6a','#7ac70c','#9b5fa5','#0ea5e9','#f59e0b','#4f7cff','#14b8a6','#ec6aa8','#8b5cf6','#64748b','#a16207','#16a34a'];
+function catColor(S,id){var a=allCats(S);for(var i=0;i<a.length;i++)if(a[i].id===id)return PALETTE[i%PALETTE.length];return '#999';}
+function cashflow(S,ym){
+  var r={inc:0,spend:0,aside:0,transfer:0,net:0,out:[],inn:[],excl:[]},mo={},mi={},me={};
+  S.tx.forEach(function(x){
+    if(ymOf(x.date)!==ym)return;var a=Number(x.amount)||0;
+    if(x.type==='in'){mi[x.cat]=(mi[x.cat]||0)+a;r.inc+=a;}
+    else if(CF_EXCL.indexOf(x.cat)>=0){me[x.cat]=(me[x.cat]||0)+a;if(x.cat==='cardpay')r.transfer+=a;else r.aside+=a;}
+    else{mo[x.cat]=(mo[x.cat]||0)+a;r.spend+=a;}
+  });
+  function list(map,total){return Object.keys(map).map(function(id){var c=catById(S,id);return {id:id,name:c?c.name:id,amt:map[id],pct:total>0?Math.round(map[id]/total*100):0,color:catColor(S,id)};}).sort(function(a,b){return b.amt-a.amt;});}
+  r.out=list(mo,r.spend);r.inn=list(mi,r.inc);
+  r.excl=CF_EXCL.map(function(id){var c=catById(S,id);return {id:id,name:c?c.name:id,amt:me[id]||0,color:catColor(S,id)};});
+  r.net=r.inc-r.spend;return r;
+}
+function cfTrend(S,ym,n){var o=[];for(var i=n-1;i>=0;i--){var m=shiftYm(ym,-i),c=cashflow(S,m);o.push({ym:m,inc:c.inc,spend:c.spend});}return o;}
+function trendSvg(tr){
+  var max=1;tr.forEach(function(t){max=Math.max(max,t.inc,t.spend);});
+  var w=300,h=120,slot=w/tr.length,g='';
+  tr.forEach(function(t,i){
+    var x=i*slot+slot/2,hi=t.inc/max*h,hs=t.spend/max*h;
+    g+='<rect x="'+(x-13).toFixed(1)+'" y="'+(h-hi).toFixed(1)+'" width="12" height="'+hi.toFixed(1)+'" rx="3" fill="#1f9d6b"/><rect x="'+(x+1).toFixed(1)+'" y="'+(h-hs).toFixed(1)+'" width="12" height="'+hs.toFixed(1)+'" rx="3" fill="#d64545"/><text x="'+x.toFixed(1)+'" y="'+(h+14)+'" text-anchor="middle" font-size="10" fill="#8a918c">'+MONTHS[Number(t.ym.split('-')[1])-1]+'</text>';
+  });
+  return '<svg viewBox="0 0 '+w+' '+(h+20)+'" role="img" style="width:100%;height:auto">'+g+'</svg>';
 }
 function monthsBetween(fromStr,toStr){
   var a=fromStr.split('-').map(Number),b=toStr.split('-').map(Number);
@@ -370,6 +405,10 @@ function selfTests(){
     var r=agentScan(B,true);var r2=agentScan(B,true);
     return r.fixed>0&&r2.bugs.length===0&&B.tx.length===2&&B.salary===0&&B.wishes[0].saved===0&&B.wishes[0].target>0;});
   t('Agent leaves clean data untouched',function(){var r=agentScan(S,true,now);return r.bugs.length===0;});
+  var F=defaultState();F.tx=[{id:'1',date:'2026-03-02',type:'in',cat:'salary',amount:1000000},{id:'2',date:'2026-03-03',type:'out',cat:'groceries',amount:200000},{id:'3',date:'2026-03-04',type:'out',cat:'saving',amount:100000},{id:'4',date:'2026-03-05',type:'out',cat:'cardpay',amount:300000}];
+  t('Cashflow excludes savings, emergency and card payments',function(){var c=cashflow(F,'2026-03');return c.inc===1000000&&c.spend===200000&&c.aside===100000&&c.transfer===300000&&c.net===800000&&c.out.length===1&&c.out[0].pct===100&&c.excl.length===3;});
+  t('Card payments are not double counted in totals',function(){var tt=totals(F,'2026-03');return tt.out===300000&&tt.transfer===300000;});
+  t('Cashflow trend and chart',function(){var tr=cfTrend(F,'2026-03',6);return tr.length===6&&tr[5].inc===1000000&&tr[0].ym==='2025-10'&&trendSvg(tr).indexOf('NaN')<0&&trendSvg(cfTrend(defaultState(),'2026-03',6)).indexOf('NaN')<0;});
   CUR=oldCur;
   return T;
 }
@@ -377,7 +416,7 @@ function selfTests(){
 
 /* ================= APP (DOM) ================= */
 var KEY='kakeibo.v1';
-var S,ui={tab:'home',ym:ymOf(dateStr(new Date())),wiz:null,sheet:null,report:null,tests:null,storageOK:true,loadNote:''};
+var S,ui={cfTab:'out',cfCat:null,tab:'home',ym:ymOf(dateStr(new Date())),wiz:null,sheet:null,report:null,tests:null,storageOK:true,loadNote:''};
 function $(s){return document.querySelector(s);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function loadState(){
@@ -473,6 +512,27 @@ function viewCharts(){
     '<h2>Where it went</h2><div class="card">'+(cats||'<div class="empty">No expenses yet.</div>')+'</div>'+
     '<h2>How to improve</h2><div class="card">'+sg+'</div>';
 }
+function cfRow(it,drill){
+  return '<div class="crow" data-act="cfcat" data-id="'+esc(it.id)+'"><div class="cdot" style="background:'+it.color+'">'+esc((it.name||'?').charAt(0).toUpperCase())+'</div><div class="t"><div>'+esc(it.name)+'</div><div class="mut">'+fmt(it.amt)+(it.pct!==undefined?'<span class="pc">'+it.pct+'%</span>':'')+'</div></div><span class="ch">›</span></div>';
+}
+function viewCash(){
+  var c=cashflow(S,ui.ym),isOut=ui.cfTab==='out';
+  if(ui.cfCat){
+    var cat=catById(S,ui.cfCat),list=sortedTx(ui.ym).filter(function(x){return x.cat===ui.cfCat;}),tot=list.reduce(function(a,x){return a+x.amount;},0);
+    return '<div style="margin-bottom:8px"><button class="btn sec sm" data-act="cfback">‹ Back</button></div><h1>'+esc(cat?cat.name:ui.cfCat)+'</h1>'+monthNav()+'<div class="card"><div class="mut">Total this month</div><div class="big">'+fmt(tot)+'</div></div><div class="card">'+(list.map(txRow).join('')||'<div class="empty">No entries.</div>')+'</div><button class="btn" data-act="addtx" data-type="'+(cat&&cat.kind==='in'?'in':'out')+'">+ Add entry</button>';
+  }
+  var list=isOut?c.out:c.inn,total=isOut?c.spend:c.inc;
+  var ring=pieSvg(list.map(function(i){return {val:i.amt,color:i.color};}),fmtShort(total),isOut?'total spending':'total income');
+  var asideTxt=(c.aside||c.transfer)?'<div class="note">Not counted as spending: set aside to savings/emergency '+fmt(c.aside)+' · card payments '+fmt(c.transfer)+'.</div>':'';
+  return '<h1>Cashflow</h1>'+monthNav()+
+    '<div class="tabs2"><button class="'+(isOut?'on':'')+'" data-act="cftab" data-v="out">Expenses</button><button class="'+(!isOut?'on':'')+'" data-act="cftab" data-v="in">Income</button></div>'+
+    '<div class="pills"><div class="pill"><span class="mut">Income</span><b class="pos">'+fmt(c.inc)+'</b></div><div class="pill"><span class="mut">Spending</span><b>'+fmt(c.spend)+'</b></div><div class="pill"><span class="mut">Net</span><b class="'+(c.net<0?'neg':'pos')+'">'+fmt(c.net)+'</b></div></div>'+
+    '<div class="card" style="text-align:center"><div style="max-width:220px;margin:0 auto">'+ring+'</div><div class="big" style="font-size:22px">'+fmt(total)+'</div></div>'+
+    '<button class="btn" data-act="addtx" data-type="'+(isOut?'out':'in')+'">+ Add '+(isOut?'expense':'income')+' manually</button>'+
+    '<h2>Categories</h2><div class="card">'+(list.map(cfRow).join('')||'<div class="empty">Nothing recorded this month.<br>Add it manually with the button above.</div>')+'</div>'+
+    (isOut?'<h2>Excluded categories</h2><div class="mut" style="margin:-4px 0 8px">Not counted in total spending</div><div class="card">'+c.excl.map(cfRow).join('')+'</div>'+asideTxt:'')+
+    '<h2>Income vs spending, 6 months</h2><div class="card">'+trendSvg(cfTrend(S,ui.ym,6))+'<div class="legend"><span><i style="background:#1f9d6b"></i>Income</span><span><i style="background:#d64545"></i>Spending</span></div></div>';
+}
 function viewWishes(){
   var base=baseFor(S,ymOf(dateStr(new Date()))),R=rule(base),today=dateStr(new Date());
   function card(w){
@@ -520,9 +580,9 @@ function render(){
   var main=$('#main'),nav=$('#nav');
   if(ui.wiz){nav.style.display='none';main.innerHTML=wizHTML();return;}
   nav.style.display='';
-  var tabs=[['home','🏠','Home'],['ledger','📒','Ledger'],['charts','📊','Charts'],['wish','🎯','Wishlist'],['setup','⚙️','Setup']];
+  var tabs=[['home','🏠','Home'],['ledger','📒','Ledger'],['cash','💸','Cashflow'],['charts','📊','Charts'],['wish','🎯','Wishlist'],['setup','⚙️','Setup']];
   nav.innerHTML=tabs.map(function(t){return '<button class="'+(ui.tab===t[0]?'on':'')+'" data-act="tab" data-v="'+t[0]+'"><b>'+t[1]+'</b>'+t[2]+'</button>';}).join('');
-  var v={home:viewHome,ledger:viewLedger,charts:viewCharts,wish:viewWishes,setup:viewSetup}[ui.tab];
+  var v={home:viewHome,ledger:viewLedger,cash:viewCash,charts:viewCharts,wish:viewWishes,setup:viewSetup}[ui.tab];
   main.innerHTML=(ui.loadNote?'<div class="card neg">'+esc(ui.loadNote)+'</div>':'')+(!ui.storageOK?'<div class="card neg">Your browser is blocking storage, so changes will not be saved. Install the app to the Home Screen and open it from there.</div>':'')+v();
 }
 
@@ -650,7 +710,10 @@ function reportText(){
     'Runtime errors: '+(S.errLog.map(function(e){return e.t+' '+e.m;}).join(' | ')||'none'),'Transactions: '+S.tx.length+', wishes: '+S.wishes.length].join('\n');
 }
 var A={
-  tab:function(el){ui.tab=el.dataset.v;render();$('#main').scrollTop=0;},
+  cftab:function(el){ui.cfTab=el.dataset.v;ui.cfCat=null;render();},
+  cfcat:function(el){ui.cfCat=el.dataset.id;render();$('#main').scrollTop=0;},
+  cfback:function(){ui.cfCat=null;render();},
+  tab:function(el){ui.tab=el.dataset.v;ui.cfCat=null;render();$('#main').scrollTop=0;},
   mprev:function(){ui.ym=shiftYm(ui.ym,-1);render();},
   mnext:function(){ui.ym=shiftYm(ui.ym,1);render();},
   goagent:function(){ui.tab='setup';render();var e=$('#agentCard');if(e)e.scrollIntoView();},
